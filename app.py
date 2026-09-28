@@ -1,294 +1,183 @@
-import json
-import os
-import uuid
-from datetime import datetime
-
 import streamlit as st
+from agent import recall_incidents, analyze_incident, save_incident_resolution, hindsight, BANK_ID
 
-# Use logo.png next to app.py if it exists, otherwise fall back to an emoji
-LOGO = "logo.png" if os.path.exists("logo.png") else "🛡️"
+st.set_page_config(page_title="Incident Response Agent", page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 
-st.set_page_config(page_title="Incident Response Assistant", page_icon=LOGO, layout="wide")
-
-HISTORY_FILE = "chat_history.json"
-rerun = st.rerun if hasattr(st, "rerun") else st.experimental_rerun
-
-# ---------- Styling ----------
-st.markdown(
-    """
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-html, body, [class*="css"], .stApp {
-    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-}
-
-/* Hide Streamlit chrome */
-#MainMenu, footer {visibility: hidden;}
-[data-testid="stAppDeployButton"] {display: none;}
-.stDeployButton {display: none;}
-
-.stApp {background-color: #0A0F1C; color: #E5E9F0;}
-.block-container {padding-top: 2rem; padding-bottom: 6rem; max-width: 820px;}
-
-/* Header */
-.header {
-    padding: 4px 0 18px 0;
-    border-bottom: 1px solid #1D2939;
-    margin-bottom: 24px;
-}
-.header h1 {
-    margin: 0; font-size: 1.55rem; font-weight: 700;
-    color: #F8FAFC; letter-spacing: -0.01em;
-}
-.header p {margin: 6px 0 0; color: #98A2B3; font-size: 0.92rem;}
-
-/* Welcome panel */
-.welcome {
-    background: #101828;
-    border: 1px solid #1D2939;
-    border-left: 3px solid #38BDF8;
-    border-radius: 12px;
-    padding: 22px 24px;
-}
-.welcome h3 {margin: 0 0 8px; font-size: 1.05rem; color: #F8FAFC; font-weight: 600;}
-.welcome p {margin: 0 0 10px; color: #98A2B3; font-size: 0.92rem; line-height: 1.55;}
-.welcome ul {margin: 0; padding-left: 18px; color: #C7D0DC; font-size: 0.9rem; line-height: 1.8;}
-
-/* Sidebar */
-[data-testid="stSidebar"] {background-color: #0D1424; border-right: 1px solid #1D2939;}
-.brand {display: flex; align-items: center; gap: 10px; margin-bottom: 4px;}
-.brand-title {font-size: 1.05rem; font-weight: 700; color: #F8FAFC;}
-.brand-sub {font-size: 0.75rem; color: #667085; margin-bottom: 14px;}
-.group-label {
-    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #667085; margin: 16px 0 6px;
-}
-
-/* Chat messages */
-[data-testid="stChatMessage"] {
-    background-color: #101828;
-    border: 1px solid #1D2939;
-    border-radius: 12px;
-    padding: 14px 18px;
-    margin-bottom: 12px;
-}
-[data-testid="stChatMessage"] p {line-height: 1.6;}
-
-/* Buttons */
-.stButton > button {
-    width: 100%; text-align: left; border-radius: 8px;
-    border: 1px solid #1D2939; color: #C7D0DC; background: #101828;
-    font-size: 0.86rem; font-weight: 500; transition: all .15s ease;
-}
-.stButton > button:hover {border-color: #38BDF8; color: #38BDF8; background: #0F1B2E;}
-.stButton > button[kind="primary"],
-.stButton > button[data-testid="stBaseButton-primary"] {
-    background: #38BDF8; color: #04101F; border: 1px solid #38BDF8;
-    font-weight: 600; text-align: center;
-}
-.stButton > button[kind="primary"]:hover,
-.stButton > button[data-testid="stBaseButton-primary"]:hover {
-    background: #7DD3FC; border-color: #7DD3FC; color: #04101F;
-}
-.stDownloadButton > button {
-    width: 100%; border-radius: 8px; border: 1px solid #1D2939;
-    color: #C7D0DC; background: #101828; font-size: 0.86rem; font-weight: 500;
-}
-.stDownloadButton > button:hover {border-color: #38BDF8; color: #38BDF8;}
-
-/* Footer note */
-.footnote {text-align: center; color: #667085; font-size: 0.75rem; margin-top: 8px;}
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+.stApp { background: radial-gradient(circle at 15% 0%, #0d1b2a 0%, #05070a 45%, #05070a 100%); }
+.main .block-container {padding-top: 1.5rem; max-width: 1200px;}
+.hero { display:flex; align-items:center; justify-content:space-between; padding: 22px 28px; border-radius: 16px; margin-bottom: 22px; background: linear-gradient(135deg, rgba(0,255,180,0.06), rgba(0,120,255,0.05)); border: 1px solid rgba(0,255,180,0.18); box-shadow: 0 0 40px rgba(0,255,180,0.05), inset 0 0 60px rgba(0,255,180,0.02); }
+.hero-title { font-size: 1.85rem; font-weight: 800; color: #eafff5; letter-spacing: 0.5px; margin:0; }
+.hero-title span { color: #00ffb3; text-shadow: 0 0 18px rgba(0,255,179,0.5); }
+.hero-sub { color:#7d94a3; font-size:0.92rem; margin-top:4px; }
+.pulse-dot { height:9px; width:9px; border-radius:50%; display:inline-block; margin-right:8px; box-shadow: 0 0 10px currentColor; animation: pulse 1.6s infinite; }
+.dot-ok { background:#00ffb3; color:#00ffb3; }
+.dot-fail { background:#ff4d6d; color:#ff4d6d; }
+@keyframes pulse { 0%{opacity:1;} 50%{opacity:0.35;} 100%{opacity:1;} }
+.status-pill { font-family:'JetBrains Mono', monospace; font-size:0.78rem; font-weight:600; padding:7px 16px; border-radius:999px; letter-spacing:0.5px; background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); }
+.stat-row {display:flex; gap:14px; margin-bottom:22px;}
+.stat-card { flex:1; background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 20px; }
+.stat-label { font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#5d7285; text-transform:uppercase; letter-spacing:1px; }
+.stat-value { font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#eafff5; margin-top:2px; }
+.section-label { font-family:'JetBrains Mono', monospace; font-size:0.78rem; font-weight:700; color:#00ffb3; text-transform:uppercase; letter-spacing:2px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+.section-label::before { content:''; width:18px; height:2px; background:#00ffb3; box-shadow: 0 0 8px #00ffb3; }
+.badge-wrap { margin: 6px 0 20px 0; }
+.badge-reuse { display:inline-flex; align-items:center; gap:10px; background: linear-gradient(135deg, rgba(0,255,179,0.14), rgba(0,255,179,0.04)); border: 1px solid rgba(0,255,179,0.45); color:#baffe8; padding:12px 24px; border-radius:12px; font-size:1.05rem; font-weight:700; box-shadow: 0 0 30px rgba(0,255,179,0.12); font-family:'JetBrains Mono', monospace; }
+.badge-new { display:inline-flex; align-items:center; gap:10px; background: linear-gradient(135deg, rgba(255,176,0,0.14), rgba(255,176,0,0.04)); border: 1px solid rgba(255,176,0,0.45); color:#ffe0a3; padding:12px 24px; border-radius:12px; font-size:1.05rem; font-weight:700; box-shadow: 0 0 30px rgba(255,176,0,0.12); font-family:'JetBrains Mono', monospace; }
+.solution-card { background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.09); border-left: 3px solid #00ffb3; border-radius:12px; padding:22px 24px; margin-bottom:20px; }
+.field-label { font-family:'JetBrains Mono', monospace; font-size:0.7rem; font-weight:700; color:#5d7285; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:5px; }
+.field-value { color:#dbe7ee; line-height:1.6; font-size:0.97rem; margin-bottom:18px; }
+.reason-note { color:#5d7285; font-size:0.85rem; font-style:italic; border-top:1px solid rgba(255,255,255,0.07); padding-top:12px; margin-top:4px; }
+.memory-count { color:#7d94a3; font-family:'JetBrains Mono', monospace; font-size:0.85rem; margin-bottom:12px; }
+.memory-empty { background: rgba(255,255,255,0.02); border:1px dashed rgba(255,255,255,0.15); border-radius:10px; padding:18px 20px; color:#5d7285; font-family:'JetBrains Mono', monospace; font-size:0.88rem; text-align:center; }
+.warn-box { background: linear-gradient(135deg, rgba(255,176,0,0.1), rgba(255,176,0,0.02)); border:1px solid rgba(255,176,0,0.35); border-radius:10px; padding:14px 18px; color:#ffe0a3; margin-bottom:14px; font-size:0.9rem; }
+.reuse-note { background: linear-gradient(135deg, rgba(0,255,179,0.08), rgba(0,255,179,0.02)); border:1px solid rgba(0,255,179,0.3); border-radius:10px; padding:14px 18px; color:#a8d4f0; font-size:0.9rem; }
+.stButton>button { border-radius:10px !important; font-weight:600 !important; }
+.stButton>button[kind="primary"] { background: linear-gradient(135deg, #00ffb3, #00b386) !important; color:#04140e !important; border:none !important; box-shadow: 0 0 24px rgba(0,255,179,0.25) !important; }
+section[data-testid="stSidebar"] { background: rgba(5,10,14,0.6); border-right:1px solid rgba(255,255,255,0.06); }
 </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-# ---------- Load saved chats ----------
-if "chats" not in st.session_state:
-    st.session_state.chats = {}
-    if os.path.exists(HISTORY_FILE):
+if "result" not in st.session_state:
+    st.session_state.result = None
+if "current_alert" not in st.session_state:
+    st.session_state.current_alert = ""
+if "saved" not in st.session_state:
+    st.session_state.saved = False
+
+try:
+    hindsight.recall(bank_id=BANK_ID, query="ping")
+    hs_ok = True
+except Exception:
+    hs_ok = False
+
+st.markdown(f"""
+<div class="hero">
+<div>
+<div class="hero-title">🛡️ <span>INCIDENT RESPONSE</span> AGENT</div>
+<div class="hero-sub">Memory-driven triage · Hindsight recall · Human-verified learning loop</div>
+</div>
+<div>
+<span class="status-pill"><span class="pulse-dot {'dot-ok' if hs_ok else 'dot-fail'}"></span>{'HINDSIGHT ONLINE' if hs_ok else 'HINDSIGHT OFFLINE'}</span>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns(3)
+mode_display = st.session_state.result["analysis"]["mode"] if st.session_state.result else "—"
+mem_display = len(st.session_state.result["memories"]) if st.session_state.result else "—"
+with c1:
+    st.markdown(f'<div class="stat-card"><div class="stat-label">Memory Bank</div><div class="stat-value">{BANK_ID}</div></div>', unsafe_allow_html=True)
+with c2:
+    st.markdown(f'<div class="stat-card"><div class="stat-label">Last Decision</div><div class="stat-value">{mode_display}</div></div>', unsafe_allow_html=True)
+with c3:
+    st.markdown(f'<div class="stat-card"><div class="stat-label">Memories Recalled</div><div class="stat-value">{mem_display}</div></div>', unsafe_allow_html=True)
+
+st.write("")
+
+with st.sidebar:
+    st.markdown('<div class="section-label">📚 MEMORY BANK</div>', unsafe_allow_html=True)
+    if st.button("🔄 Refresh stored incidents", use_container_width=True):
         try:
-            with open(HISTORY_FILE, "r") as f:
-                st.session_state.chats = json.load(f)
-        except Exception:
-            st.session_state.chats = {}
-    st.session_state.current = None
-
-chats = st.session_state.chats
-
-# ---------- Sidebar ----------
-if os.path.exists("logo.png"):
-    st.sidebar.image("logo.png", width=44)
-    st.sidebar.markdown(
-        '<div class="brand-title">IR Assistant</div>'
-        '<div class="brand-sub">Incident response support</div>',
-        unsafe_allow_html=True,
-    )
-else:
-    st.sidebar.markdown(
-        """
-<div class="brand">
-<svg width="34" height="34" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-<defs><linearGradient id="lg" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#38BDF8"/><stop offset="1" stop-color="#2563EB"/></linearGradient></defs>
-<path d="M24 4L7 10v13c0 10.5 7.2 18.2 17 21 9.8-2.8 17-10.5 17-21V10L24 4z" fill="url(#lg)"/>
-<path d="M13 25h6l3-7 5 14 3-7h5" stroke="#0A0F1C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-<span class="brand-title">IR Assistant</span>
-</div>
-<div class="brand-sub">Incident response support</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-if st.sidebar.button("+  New incident", type="primary"):
-    st.session_state.current = None
-    rerun()
-
-search = st.sidebar.text_input("Search", placeholder="Search incidents...", label_visibility="collapsed")
-
-sorted_ids = sorted(chats, key=lambda k: chats[k]["created"], reverse=True)
-today = datetime.now().date()
-last_group = None
-shown = 0
-
-for cid in sorted_ids:
-    chat = chats[cid]
-    if search:
-        text = chat["title"] + " " + " ".join(m["content"] for m in chat["messages"])
-        if search.lower() not in text.lower():
-            continue
-
-    days_old = (today - datetime.fromisoformat(chat["created"]).date()).days
-    if days_old == 0:
-        group = "Today"
-    elif days_old == 1:
-        group = "Yesterday"
+            with st.spinner("Querying Hindsight..."):
+                browse = hindsight.recall(bank_id=BANK_ID, query="incident")
+                st.session_state.browse_results = browse.results[:20]
+        except Exception as e:
+            st.error(f"Couldn't load memory: {e}")
+    if "browse_results" in st.session_state:
+        st.caption(f"{len(st.session_state.browse_results)} memories · showing top 20")
+        for m in st.session_state.browse_results:
+            with st.expander(m.text[:60] + "..."):
+                st.caption(m.text)
     else:
-        group = "Earlier"
+        st.caption("Click refresh to load stored incidents.")
 
-    if group != last_group:
-        st.sidebar.markdown('<div class="group-label">' + group + "</div>", unsafe_allow_html=True)
-        last_group = group
+st.markdown('<div class="section-label">🔍 NEW ALERT</div>', unsafe_allow_html=True)
 
-    col1, col2 = st.sidebar.columns([6, 1])
-    label = ("● " if cid == st.session_state.current else "") + chat["title"]
-    if col1.button(label, key="open_" + cid):
-        st.session_state.current = cid
-        rerun()
-    if col2.button("✕", key="del_" + cid):
-        del chats[cid]
-        with open(HISTORY_FILE, "w") as f:
-            json.dump(chats, f, indent=2)
-        if st.session_state.current == cid:
-            st.session_state.current = None
-        rerun()
-    shown += 1
+examples = {
+    "🆕 Novel · USB device": "Employee laptop reported unauthorized USB device connected",
+    "🔁 Repeat · SSH brute-force": "Hundreds of failed SSH login attempts from one external IP",
+    "🔁 Repeat · DB timeout": "Database connection timeouts on the payments API",
+}
+ex_cols = st.columns(len(examples))
+for i, (label, text) in enumerate(examples.items()):
+    if ex_cols[i].button(label, use_container_width=True):
+        st.session_state.current_alert = text
 
-if shown == 0:
-    st.sidebar.caption("No incidents found.")
+alert = st.text_area("Alert input", value=st.session_state.current_alert, height=90,
+                      placeholder="Paste or type the incoming alert / symptom...", label_visibility="collapsed")
 
-st.sidebar.markdown('<div class="group-label">Actions</div>', unsafe_allow_html=True)
+if st.button("▶  ANALYZE ALERT", type="primary", use_container_width=True):
+    if not alert.strip():
+        st.warning("Enter an alert first.")
+    else:
+        try:
+            with st.spinner("🔎 Querying Hindsight memory..."):
+                memories = recall_incidents(alert)
+            with st.spinner("🧠 Running LLM analysis..."):
+                analysis = analyze_incident(alert, memories)
+            st.session_state.result = {"alert": alert, "memories": memories, "analysis": analysis}
+            st.session_state.current_alert = alert
+            st.session_state.saved = False
+            st.rerun()
+        except Exception as e:
+            st.error(f"Something went wrong: {e}")
 
-if st.session_state.current in chats:
-    current_chat = chats[st.session_state.current]
-    transcript = "\n\n".join(
-        "[" + m.get("time", "") + "] " + m["role"].upper() + ": " + m["content"]
-        for m in current_chat["messages"]
-    )
-    st.sidebar.download_button(
-        "Export this incident",
-        data=transcript,
-        file_name="incident_" + datetime.now().strftime("%Y%m%d_%H%M") + ".txt",
-        mime="text/plain",
-    )
+if st.session_state.result:
+    r = st.session_state.result
+    analysis = r["analysis"]
+    memories = r["memories"]
+    mode = analysis.get("mode", "NEW")
+    is_reuse = mode == "REUSE"
 
-if st.sidebar.button("Clear all history"):
-    st.session_state.chats = {}
-    st.session_state.current = None
-    with open(HISTORY_FILE, "w") as f:
-        json.dump({}, f)
-    rerun()
+    st.write("")
+    badge_class = "badge-reuse" if is_reuse else "badge-new"
+    badge_text = "✅  REUSED FROM MEMORY" if is_reuse else "🆕  NEW — NO MATCH FOUND"
+    st.markdown(f'<div class="badge-wrap"><div class="{badge_class}">{badge_text}</div></div>', unsafe_allow_html=True)
 
-st.sidebar.caption("Saved incidents: " + str(len(chats)))
-
-# ---------- Header ----------
-st.markdown(
-    """
-<div class="header">
-    <h1>Incident Response Assistant</h1>
-    <p>Describe a security incident to receive structured triage and response guidance.</p>
+    st.markdown(f"""
+<div class="solution-card">
+<div class="field-label">Root Cause</div>
+<div class="field-value">{analysis.get("root_cause","")}</div>
+<div class="field-label">Recommended Solution</div>
+<div class="field-value">{analysis.get("solution","")}</div>
+<div class="reason-note">💭 {analysis.get("reason","")}</div>
 </div>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-# ---------- Show current chat ----------
-if st.session_state.current in chats:
-    messages = chats[st.session_state.current]["messages"]
-else:
-    messages = []
+    st.markdown('<div class="section-label">📋 MEMORIES RECALLED</div>', unsafe_allow_html=True)
+    if memories:
+        st.markdown(f'<div class="memory-count">{len(memories)} memories retrieved from bank "{BANK_ID}"</div>', unsafe_allow_html=True)
+        for i, mem in enumerate(memories, start=1):
+            with st.expander(f"◦ Memory {i:02d}"):
+                st.markdown(f'<div class="mono" style="font-size:0.88rem; color:#c8d6de;">{mem}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="memory-empty">— NO RELATED MEMORIES FOUND —<br>This incident is entirely new to the agent.</div>', unsafe_allow_html=True)
 
-if len(messages) == 0:
-    st.markdown(
-        """
-<div class="welcome">
-    <h3>Describe the incident</h3>
-    <p>Include what you observed, which systems are affected, and when it started. For example:</p>
-    <ul>
-        <li>Suspicious login from an unknown IP on the finance server</li>
-        <li>Ransomware note found on a shared drive</li>
-        <li>Unusual outbound traffic from a production database</li>
-    </ul>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.write("")
 
-for message in messages:
-    avatar = "👤" if message["role"] == "user" else LOGO
-    with st.chat_message(message["role"], avatar=avatar):
-        st.markdown(message["content"])
-        if message.get("time"):
-            st.caption(message["time"])
+    if is_reuse:
+        st.markdown('<div class="reuse-note">✅ This solution was already verified previously — nothing new to save.</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="warn-box">⚠️ This is a newly generated solution — review it carefully before it becomes permanent knowledge in the memory bank.</div>', unsafe_allow_html=True)
+        approved = st.checkbox("I have reviewed and verified this solution works")
 
-# ---------- Input ----------
-prompt = st.chat_input("Describe the incident...")
-
-if prompt:
-    is_new = False
-    if st.session_state.current not in chats:
-        new_id = str(uuid.uuid4())
-        title = prompt[:34] + ("..." if len(prompt) > 34 else "")
-        chats[new_id] = {"title": title, "created": datetime.now().isoformat(), "messages": []}
-        st.session_state.current = new_id
-        is_new = True
-
-    messages = chats[st.session_state.current]["messages"]
-    stamp = datetime.now().strftime("%d %b %Y, %H:%M")
-
-    messages.append({"role": "user", "content": prompt, "time": stamp})
-    with st.chat_message("user", avatar="👤"):
-        st.markdown(prompt)
-        st.caption(stamp)
-
-    # >>> Replace this line with your chatbot's response <
-    # `messages` holds the full conversation so far if your bot needs it
-    response = "You said: " + prompt
-
-    reply_stamp = datetime.now().strftime("%d %b %Y, %H:%M")
-    messages.append({"role": "assistant", "content": response, "time": reply_stamp})
-    with st.chat_message("assistant", avatar=LOGO):
-        st.markdown(response)
-        st.caption(reply_stamp)
-
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(chats, f, indent=2)
-
-    if is_new:
-        rerun()  # refresh the sidebar so the new chat shows up
-
-st.markdown(
-    '<div class="footnote">Verify all recommendations before acting on production systems.</div>',
-    unsafe_allow_html=True,
-)
+        if st.session_state.saved:
+            st.success("✅ Saved to memory. Try a similar alert now to see it get reused.")
+        else:
+            if st.button("💾  SAVE RESOLUTION TO MEMORY", disabled=not approved, use_container_width=True):
+                try:
+                    save_incident_resolution(
+                        alert=r["alert"],
+                        root_cause=analysis.get("root_cause", ""),
+                        solution=analysis.get("solution", ""),
+                        source="LLM generated and user verified",
+                    )
+                    st.session_state.saved = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Couldn't save: {e}")
